@@ -107,29 +107,47 @@ async function handleReplicate(
   );
 }
 
+const FAL_MODELS: Record<string, { endpoint: string; buildBody: (prompt: string, image: string, mask: string) => Record<string, unknown> }> = {
+  qwen: {
+    endpoint: "fal-ai/qwen-image-edit/inpaint",
+    buildBody: (prompt, image, mask) => ({
+      prompt,
+      image_url: image,
+      mask_url: mask,
+    }),
+  },
+  sd: {
+    endpoint: "fal-ai/stable-diffusion-inpainting",
+    buildBody: (prompt, image, mask) => ({
+      prompt,
+      image_url: image,
+      mask_url: mask,
+      num_inference_steps: 25,
+      guidance_scale: 7.5,
+      strength: 0.99,
+    }),
+  },
+};
+
 async function handleFal(
   image: string,
   mask: string,
   prompt: string,
-  apiKey: string
+  apiKey: string,
+  model: string = "qwen"
 ): Promise<NextResponse> {
+  const modelConfig = FAL_MODELS[model] || FAL_MODELS.qwen;
+
   // Submit request
   const submitRes = await fetch(
-    "https://queue.fal.run/fal-ai/stable-diffusion-inpainting",
+    `https://queue.fal.run/${modelConfig.endpoint}`,
     {
       method: "POST",
       headers: {
         Authorization: `Key ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        prompt,
-        image_url: image,
-        mask_url: mask,
-        num_inference_steps: 25,
-        guidance_scale: 7.5,
-        strength: 0.99,
-      }),
+      body: JSON.stringify(modelConfig.buildBody(prompt, image, mask)),
     }
   );
 
@@ -157,8 +175,11 @@ async function handleFal(
   const submitData = await submitRes.json();
 
   // If we got a direct result (synchronous response)
-  if (submitData.images) {
+  if (submitData.images && submitData.images.length > 0) {
     return NextResponse.json({ output: submitData.images[0].url });
+  }
+  if (submitData.output_image_url) {
+    return NextResponse.json({ output: submitData.output_image_url });
   }
 
   // Poll for async result
@@ -170,8 +191,8 @@ async function handleFal(
     );
   }
 
-  const statusUrl = `https://queue.fal.run/fal-ai/stable-diffusion-inpainting/requests/${requestId}/status`;
-  const resultUrl = `https://queue.fal.run/fal-ai/stable-diffusion-inpainting/requests/${requestId}`;
+  const statusUrl = `https://queue.fal.run/${modelConfig.endpoint}/requests/${requestId}/status`;
+  const resultUrl = `https://queue.fal.run/${modelConfig.endpoint}/requests/${requestId}`;
   const maxAttempts = 60;
 
   for (let i = 0; i < maxAttempts; i++) {
@@ -207,6 +228,9 @@ async function handleFal(
       if (resultData.images && resultData.images.length > 0) {
         return NextResponse.json({ output: resultData.images[0].url });
       }
+      if (resultData.output_image_url) {
+        return NextResponse.json({ output: resultData.output_image_url });
+      }
 
       return NextResponse.json(
         { error: "Ingen bilder i resultatet." },
@@ -230,7 +254,7 @@ async function handleFal(
 
 export async function POST(req: NextRequest) {
   try {
-    const { image, mask, prompt, apiKey, provider = "fal" } = await req.json();
+    const { image, mask, prompt, apiKey, provider = "fal", model = "qwen" } = await req.json();
 
     if (!apiKey) {
       return NextResponse.json(
@@ -251,7 +275,7 @@ export async function POST(req: NextRequest) {
     if (selectedProvider === "replicate") {
       return await handleReplicate(image, mask, prompt, apiKey);
     } else {
-      return await handleFal(image, mask, prompt, apiKey);
+      return await handleFal(image, mask, prompt, apiKey, model);
     }
   } catch {
     return NextResponse.json(

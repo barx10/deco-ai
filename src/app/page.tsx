@@ -30,7 +30,8 @@ export default function Home() {
   const handleGenerate = async (
     imageData: string,
     maskData: string,
-    prompt: string
+    prompt: string,
+    model?: string
   ) => {
     if (!apiKey) {
       setError("Legg inn API-nøkkel først.");
@@ -50,6 +51,7 @@ export default function Home() {
           prompt,
           apiKey,
           provider,
+          model: model || "qwen",
         }),
       });
 
