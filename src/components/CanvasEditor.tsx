@@ -27,7 +27,7 @@ export default function CanvasEditor({
   );
   const imageRef = useRef<HTMLImageElement | null>(null);
 
-  // Load image and setup canvases
+  // Load image and compute canvas size
   useEffect(() => {
     const img = new Image();
     img.onload = () => {
@@ -36,36 +36,40 @@ export default function CanvasEditor({
       const container = containerRef.current;
       if (!container) return;
 
-      const maxWidth = container.clientWidth;
+      const maxWidth = Math.max(container.clientWidth, 300);
       const scale = Math.min(maxWidth / img.width, 600 / img.height, 1);
       const width = Math.floor(img.width * scale);
       const height = Math.floor(img.height * scale);
       setCanvasSize({ width, height });
-
-      // Draw image on image canvas
-      const imageCanvas = imageCanvasRef.current;
-      if (imageCanvas) {
-        imageCanvas.width = width;
-        imageCanvas.height = height;
-        const ctx = imageCanvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-        }
-      }
-
-      // Setup mask canvas
-      const maskCanvas = maskCanvasRef.current;
-      if (maskCanvas) {
-        maskCanvas.width = width;
-        maskCanvas.height = height;
-        const ctx = maskCanvas.getContext("2d");
-        if (ctx) {
-          ctx.clearRect(0, 0, width, height);
-        }
-      }
     };
     img.src = imageSrc;
   }, [imageSrc]);
+
+  // Draw image on canvas once canvasSize is set and canvases are mounted
+  useEffect(() => {
+    const img = imageRef.current;
+    if (!img || canvasSize.width === 0) return;
+
+    const imageCanvas = imageCanvasRef.current;
+    if (imageCanvas) {
+      imageCanvas.width = canvasSize.width;
+      imageCanvas.height = canvasSize.height;
+      const ctx = imageCanvas.getContext("2d");
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, canvasSize.width, canvasSize.height);
+      }
+    }
+
+    const maskCanvas = maskCanvasRef.current;
+    if (maskCanvas) {
+      maskCanvas.width = canvasSize.width;
+      maskCanvas.height = canvasSize.height;
+      const ctx = maskCanvas.getContext("2d");
+      if (ctx) {
+        ctx.clearRect(0, 0, canvasSize.width, canvasSize.height);
+      }
+    }
+  }, [canvasSize]);
 
   const getCanvasCoords = useCallback(
     (e: React.MouseEvent | React.TouchEvent) => {
