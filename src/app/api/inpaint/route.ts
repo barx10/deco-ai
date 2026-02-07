@@ -1,264 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-type Provider = "replicate" | "fal";
-
-interface ReplicatePrediction {
-  id: string;
-  status: string;
-  output?: string[];
-  error?: string;
-}
-
-async function handleReplicate(
-  image: string,
-  mask: string,
-  prompt: string,
-  apiKey: string
-): Promise<NextResponse> {
-  const createRes = await fetch("https://api.replicate.com/v1/predictions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      version:
-        "c11bac58203367db93a3c552bd49a25a5c84b50a20f1acd1a225f6c6e5e982f1",
-      input: {
-        prompt,
-        image,
-        mask,
-        num_outputs: 1,
-        guidance_scale: 7.5,
-        num_inference_steps: 25,
-      },
-    }),
-  });
-
-  if (!createRes.ok) {
-    const errorData = await createRes.json().catch(() => null);
-    if (createRes.status === 401 || createRes.status === 403) {
-      return NextResponse.json(
-        { error: "Ugyldig API-nøkkel. Sjekk at nøkkelen din er korrekt." },
-        { status: 401 }
-      );
-    }
-    if (createRes.status === 429) {
-      return NextResponse.json(
-        {
-          error:
-            "Rate limit nådd hos Replicate. Vent litt og prøv igjen, eller bytt til FAL.ai.",
-        },
-        { status: 429 }
-      );
-    }
-    return NextResponse.json(
-      {
-        error:
-          errorData?.detail ||
-          "Kunne ikke starte bildegenerering. Prøv igjen.",
-      },
-      { status: createRes.status }
-    );
-  }
-
-  const prediction: ReplicatePrediction = await createRes.json();
-  const pollUrl = `https://api.replicate.com/v1/predictions/${prediction.id}`;
-  const maxAttempts = 60;
-
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    const pollRes = await fetch(pollUrl, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-
-    if (!pollRes.ok) {
-      return NextResponse.json(
-        { error: "Feil ved henting av resultat. Prøv igjen." },
-        { status: 500 }
-      );
-    }
-
-    const result: ReplicatePrediction = await pollRes.json();
-
-    if (result.status === "succeeded" && result.output) {
-      return NextResponse.json({ output: result.output[0] });
-    }
-
-    if (result.status === "failed") {
-      return NextResponse.json(
-        { error: result.error || "Bildegenerering feilet. Prøv igjen." },
-        { status: 500 }
-      );
-    }
-
-    if (result.status === "canceled") {
-      return NextResponse.json(
-        { error: "Bildegenerering ble avbrutt." },
-        { status: 500 }
-      );
-    }
-  }
-
-  return NextResponse.json(
-    { error: "Tidsavbrudd – bildegenerering tok for lang tid." },
-    { status: 504 }
-  );
-}
-
-const FAL_MODELS: Record<string, { endpoint: string; buildBody: (prompt: string, image: string, mask: string) => Record<string, unknown> }> = {
-  qwen: {
-    endpoint: "fal-ai/qwen-image-edit/inpaint",
-    buildBody: (prompt, image, mask) => ({
-      prompt,
-      image_url: image,
-      mask_url: mask,
-    }),
-  },
-  sd: {
-    endpoint: "fal-ai/stable-diffusion-inpainting",
-    buildBody: (prompt, image, mask) => ({
-      prompt,
-      image_url: image,
-      mask_url: mask,
-      num_inference_steps: 25,
-      guidance_scale: 7.5,
-      strength: 0.99,
-    }),
-  },
-};
-
-async function handleFal(
-  image: string,
-  mask: string,
-  prompt: string,
-  apiKey: string,
-  model: string = "qwen"
-): Promise<NextResponse> {
-  const modelConfig = FAL_MODELS[model] || FAL_MODELS.qwen;
-
-  // Submit request
-  const submitRes = await fetch(
-    `https://queue.fal.run/${modelConfig.endpoint}`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Key ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(modelConfig.buildBody(prompt, image, mask)),
-    }
-  );
-
-  if (!submitRes.ok) {
-    const errorData = await submitRes.json().catch(() => null);
-    if (submitRes.status === 401 || submitRes.status === 403) {
-      return NextResponse.json(
-        {
-          error:
-            "Ugyldig FAL API-nøkkel. Sjekk at nøkkelen din er korrekt.",
-        },
-        { status: 401 }
-      );
-    }
-    return NextResponse.json(
-      {
-        error:
-          errorData?.detail ||
-          "Kunne ikke starte bildegenerering. Prøv igjen.",
-      },
-      { status: submitRes.status }
-    );
-  }
-
-  const submitData = await submitRes.json();
-
-  // If we got a direct result (synchronous response)
-  if (submitData.images && submitData.images.length > 0) {
-    return NextResponse.json({ output: submitData.images[0].url });
-  }
-  if (submitData.output_image_url) {
-    return NextResponse.json({ output: submitData.output_image_url });
-  }
-
-  // Poll for async result
-  const requestId = submitData.request_id;
-  if (!requestId) {
-    return NextResponse.json(
-      { error: "Uventet svar fra FAL API." },
-      { status: 500 }
-    );
-  }
-
-  const statusUrl = `https://queue.fal.run/${modelConfig.endpoint}/requests/${requestId}/status`;
-  const resultUrl = `https://queue.fal.run/${modelConfig.endpoint}/requests/${requestId}`;
-  const maxAttempts = 60;
-
-  for (let i = 0; i < maxAttempts; i++) {
-    await new Promise((resolve) => setTimeout(resolve, 2000));
-
-    const statusRes = await fetch(statusUrl, {
-      headers: { Authorization: `Key ${apiKey}` },
-    });
-
-    if (!statusRes.ok) {
-      return NextResponse.json(
-        { error: "Feil ved henting av status. Prøv igjen." },
-        { status: 500 }
-      );
-    }
-
-    const statusData = await statusRes.json();
-
-    if (statusData.status === "COMPLETED") {
-      // Fetch the result
-      const resultRes = await fetch(resultUrl, {
-        headers: { Authorization: `Key ${apiKey}` },
-      });
-
-      if (!resultRes.ok) {
-        return NextResponse.json(
-          { error: "Feil ved henting av resultat. Prøv igjen." },
-          { status: 500 }
-        );
-      }
-
-      const resultData = await resultRes.json();
-      if (resultData.images && resultData.images.length > 0) {
-        return NextResponse.json({ output: resultData.images[0].url });
-      }
-      if (resultData.output_image_url) {
-        return NextResponse.json({ output: resultData.output_image_url });
-      }
-
-      return NextResponse.json(
-        { error: "Ingen bilder i resultatet." },
-        { status: 500 }
-      );
-    }
-
-    if (statusData.status === "FAILED") {
-      return NextResponse.json(
-        { error: "Bildegenerering feilet hos FAL. Prøv igjen." },
-        { status: 500 }
-      );
-    }
-  }
-
-  return NextResponse.json(
-    { error: "Tidsavbrudd – bildegenerering tok for lang tid." },
-    { status: 504 }
-  );
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const { image, mask, prompt, apiKey, provider = "fal", model = "qwen" } = await req.json();
+    const { image, mask, prompt, apiKey } = await req.json();
 
     if (!apiKey) {
       return NextResponse.json(
-        { error: "API-nøkkel mangler." },
+        { error: "API-nøkkel mangler. Legg inn din Google AI API-nøkkel." },
         { status: 400 }
       );
     }
@@ -270,13 +18,90 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const selectedProvider: Provider = provider === "replicate" ? "replicate" : "fal";
+    // Strip data URL prefix to get raw base64
+    const imageBase64 = image.replace(/^data:image\/\w+;base64,/, "");
+    const maskBase64 = mask.replace(/^data:image\/\w+;base64,/, "");
 
-    if (selectedProvider === "replicate") {
-      return await handleReplicate(image, mask, prompt, apiKey);
-    } else {
-      return await handleFal(image, mask, prompt, apiKey, model);
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-capability-001:predict?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instances: [
+            {
+              prompt,
+              referenceImages: [
+                {
+                  referenceType: "REFERENCE_TYPE_RAW",
+                  referenceId: 1,
+                  referenceImage: {
+                    bytesBase64Encoded: imageBase64,
+                  },
+                },
+                {
+                  referenceType: "REFERENCE_TYPE_MASK",
+                  referenceId: 2,
+                  referenceImage: {
+                    bytesBase64Encoded: maskBase64,
+                  },
+                  maskImageConfig: {
+                    maskMode: "MASK_MODE_USER_PROVIDED",
+                    dilation: 0.01,
+                  },
+                },
+              ],
+            },
+          ],
+          parameters: {
+            editMode: "EDIT_MODE_INPAINT_INSERTION",
+            sampleCount: 1,
+          },
+        }),
+      }
+    );
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => null);
+      if (res.status === 401 || res.status === 403) {
+        return NextResponse.json(
+          {
+            error:
+              "Ugyldig API-nøkkel. Sjekk at nøkkelen din er korrekt og at Imagen API er aktivert.",
+          },
+          { status: 401 }
+        );
+      }
+      if (res.status === 429) {
+        return NextResponse.json(
+          { error: "Rate limit nådd. Vent litt og prøv igjen." },
+          { status: 429 }
+        );
+      }
+      return NextResponse.json(
+        {
+          error:
+            errorData?.error?.message ||
+            "Kunne ikke generere bilde. Prøv igjen.",
+        },
+        { status: res.status }
+      );
     }
+
+    const data = await res.json();
+
+    if (data.predictions && data.predictions.length > 0) {
+      const base64Result = data.predictions[0].bytesBase64Encoded;
+      const mimeType = data.predictions[0].mimeType || "image/png";
+      return NextResponse.json({
+        output: `data:${mimeType};base64,${base64Result}`,
+      });
+    }
+
+    return NextResponse.json(
+      { error: "Ingen bilder i resultatet fra Google." },
+      { status: 500 }
+    );
   } catch {
     return NextResponse.json(
       { error: "En uventet feil oppstod. Prøv igjen." },

@@ -4,7 +4,7 @@ import { useRef, useState, useEffect, useCallback } from "react";
 
 interface CanvasEditorProps {
   imageSrc: string;
-  onGenerate: (imageData: string, maskData: string, prompt: string, model: string) => void;
+  onGenerate: (imageData: string, maskData: string, prompt: string) => void;
   isProcessing: boolean;
 }
 
@@ -20,7 +20,6 @@ export default function CanvasEditor({
   const [brushSize, setBrushSize] = useState(30);
   const [prompt, setPrompt] = useState("");
   const [action, setAction] = useState<"replace" | "color">("replace");
-  const [model, setModel] = useState("qwen");
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [hasMask, setHasMask] = useState(false);
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(
@@ -217,7 +216,7 @@ export default function CanvasEditor({
         ? `Change the color to: ${prompt}. Keep the same object and shape, only change the color.`
         : prompt;
 
-    onGenerate(imageData, maskData, fullPrompt, model);
+    onGenerate(imageData, maskData, fullPrompt);
   };
 
   return (
@@ -258,19 +257,6 @@ export default function CanvasEditor({
           </select>
         </div>
 
-        <div className="h-6 w-px bg-border" />
-
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium">Modell:</label>
-          <select
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="px-3 py-1.5 text-sm border border-border rounded-lg bg-white"
-          >
-            <option value="qwen">Qwen Image Edit</option>
-            <option value="sd">SD Inpainting</option>
-          </select>
-        </div>
       </div>
 
       {/* Canvas area */}

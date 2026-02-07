@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import ApiKeyInput, { Provider } from "@/components/ApiKeyInput";
+import ApiKeyInput from "@/components/ApiKeyInput";
 import ImageUpload from "@/components/ImageUpload";
 import CanvasEditor from "@/components/CanvasEditor";
 import ResultView from "@/components/ResultView";
@@ -10,7 +10,6 @@ type AppState = "upload" | "edit" | "result";
 
 export default function Home() {
   const [apiKey, setApiKey] = useState("");
-  const [provider, setProvider] = useState<Provider>("fal");
   const [appState, setAppState] = useState<AppState>("upload");
   const [imageSrc, setImageSrc] = useState("");
   const [resultSrc, setResultSrc] = useState("");
@@ -30,8 +29,7 @@ export default function Home() {
   const handleGenerate = async (
     imageData: string,
     maskData: string,
-    prompt: string,
-    model?: string
+    prompt: string
   ) => {
     if (!apiKey) {
       setError("Legg inn API-nøkkel først.");
@@ -50,8 +48,6 @@ export default function Home() {
           mask: maskData,
           prompt,
           apiKey,
-          provider,
-          model: model || "qwen",
         }),
       });
 
@@ -97,11 +93,7 @@ export default function Home() {
 
       <main className="max-w-4xl mx-auto px-4 mt-6">
         {/* API Key */}
-        <ApiKeyInput
-          onKeySet={handleKeySet}
-          provider={provider}
-          onProviderChange={setProvider}
-        />
+        <ApiKeyInput onKeySet={handleKeySet} />
 
         {/* Steps indicator */}
         <div className="flex items-center gap-2 mb-6 text-sm">
@@ -157,7 +149,8 @@ export default function Home() {
         {/* No API key warning */}
         {!apiKey && appState !== "upload" && (
           <div className="mt-4 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg px-4 py-3 text-sm">
-            Husk å legge inn din API-nøkkel ovenfor for å generere bilder.
+            Husk å legge inn din Google AI API-nøkkel ovenfor for å generere
+            bilder.
           </div>
         )}
       </main>
